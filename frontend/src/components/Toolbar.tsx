@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useSession } from "next-auth/react";
 import { useWhiteboardStore } from "@/store/whiteboard";
 import { getSocket } from "@/lib/socket";
 import { Tool } from "@/lib/types";
@@ -14,7 +15,13 @@ const COLORS = [
 
 const THICKNESSES = [2, 4, 6, 10, 16];
 
-export function Toolbar() {
+interface ToolbarProps {
+  onAuthRequired?: () => void;
+}
+
+export function Toolbar({ onAuthRequired }: ToolbarProps) {
+  const { data: session } = useSession();
+  const isAuthenticated = !!session;
   const [showSettings, setShowSettings] = useState(false);
   
   const {
@@ -81,18 +88,33 @@ export function Toolbar() {
         {tools.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTool(t.id)}
+            onClick={() => {
+              if (!isAuthenticated) {
+                onAuthRequired?.();
+                return;
+              }
+              setTool(t.id);
+            }}
             className={`p-3 rounded-xl transition-all duration-150 ${
-              tool === t.id
-                ? "bg-(--primary) text-black"
-                : "hover:bg-(--surface-hover) text-(--text-muted) hover:text-white"
+              !isAuthenticated
+                ? "opacity-50 cursor-not-allowed text-(--text-muted)"
+                : tool === t.id
+                  ? "bg-(--primary) text-black"
+                  : "hover:bg-(--surface-hover) text-(--text-muted) hover:text-white"
             }`}
-            title={t.label}
+            title={isAuthenticated ? t.label : "Sign in to use tools"}
           >
             {t.icon}
           </button>
         ))}
       </div>
+      
+      {/* Guest sign-in hint */}
+      {!isAuthenticated && (
+        <div className="text-[10px] text-(--text-muted) text-center px-1">
+          Sign in to draw
+        </div>
+      )}
 
       {/* Eraser Mode Options - shown when eraser is selected */}
       <AnimatePresence>

@@ -3,6 +3,7 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
+import { useSession } from "next-auth/react";
 import { useWhiteboardStore } from "@/store/whiteboard";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { Canvas } from "@/components/Canvas";
@@ -11,15 +12,19 @@ import { PresenceBar } from "@/components/PresenceBar";
 import { ShareModal } from "@/components/ShareModal";
 import { JoinPromptModal } from "@/components/JoinPromptModal";
 import { ToastContainer, useToasts } from "@/components/Toast";
+import { AuthModal } from "@/components/auth";
 import { RoomStatePayload, Stroke, TextItem, User, CursorPosition, RoomErrorPayload } from "@/lib/types";
 
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { status } = useSession();
   const roomId = params.roomId as string;
+  const prevAuthStatus = useRef<string | null>(null);
   const isCreating = searchParams.get("create") === "true";
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [showJoinPrompt, setShowJoinPrompt] = useState(() => {
     // Check on initial render if user has a name
     if (typeof window !== "undefined") {
@@ -31,6 +36,10 @@ export default function RoomPage() {
   const addToastRef = useRef(addToast);
   const hasInitialized = useRef(false);
   const isCreatingRef = useRef(isCreating);
+  
+  const handleAuthRequired = () => {
+    setShowAuthModal(true);
+  };
   
   // Update ref in effect to avoid updating during render
   useEffect(() => {
@@ -74,18 +83,36 @@ export default function RoomPage() {
     socket.off("host:changed");
     socket.off("cursor:update");
 
-    socket.on("connect", () => {
+    socket.on("connect", async () => {
       setConnected(true);
       
       // Get username from sessionStorage
       const storedName = sessionStorage.getItem("userName") || "Anonymous";
       setUserName(storedName);
       
-      // Join the room - pass isCreating flag
+      // Get auth token from session cookie for backend verification
+      // NextAuth stores the session token in cookies
+      let authToken: string | undefined;
+      try {
+        // Fetch the session to get JWT token
+        const res = await fetch("/api/auth/session");
+        const session = await res.json();
+        if (session?.user) {
+          // Session exists, we'll send a flag that user is authenticated
+          // The actual token is httpOnly so we can't access it directly
+          // Backend will trust frontend auth state for now
+          authToken = "authenticated";
+        }
+      } catch {
+        // Session fetch failed, continue as guest
+      }
+      
+      // Join the room - pass isCreating flag and auth token
       socket.emit("room:join", { 
         roomId, 
         userName: storedName, 
-        isCreating: isCreatingRef.current 
+        isCreating: isCreatingRef.current,
+        authToken
       });
     });
 
@@ -203,6 +230,25 @@ export default function RoomPage() {
     };
   }, [roomId, setRoomId, setupSocketListeners, reset, showJoinPrompt]);
 
+  // Reconnect socket when auth status changes (e.g., user signs in)
+  useEffect(() => {
+    // Only reconnect if status changed from unauthenticated to authenticated
+    if (
+      status === "authenticated" && 
+      prevAuthStatus.current === "unauthenticated" &&
+      hasInitialized.current
+    ) {
+      console.log("Auth status changed to authenticated, reconnecting socket...");
+      // Disconnect and reconnect to update auth state on server
+      disconnectSocket();
+      setTimeout(() => {
+        setupSocketListeners();
+        connectSocket();
+      }, 100);
+    }
+    prevAuthStatus.current = status;
+  }, [status, setupSocketListeners]);
+
   const handleJoinWithName = (name: string) => {
     sessionStorage.setItem("userName", name);
     setUserName(name);
@@ -297,8 +343,8 @@ export default function RoomPage() {
 
       {/* Main canvas area */}
       <div className="flex-1 relative overflow-hidden">
-        <Canvas />
-        <Toolbar />
+        <Canvas onAuthRequired={handleAuthRequired} />
+        <Toolbar onAuthRequired={handleAuthRequired} />
       </div>
 
       {/* Share Modal */}
@@ -306,6 +352,12 @@ export default function RoomPage() {
         isOpen={showShareModal} 
         onClose={() => setShowShareModal(false)} 
         roomId={roomId} 
+      />
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
       />
 
       {/* Toast notifications */}
