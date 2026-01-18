@@ -563,6 +563,15 @@ export default function Home() {
             {/* Auth (Clerk unchanged) */}
             {isSignedIn ? (
               <div className="flex items-center gap-2 border-l border-(--border) pl-3">
+                <button
+                  onClick={() => router.push("/dashboard")}
+                  className="px-3 py-1.5 text-sm bg-(--primary) hover:bg-(--primary-hover) text-black font-medium rounded-lg transition-colors hidden md:inline-flex items-center gap-1.5"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                  </svg>
+                  Dashboard
+                </button>
                 <div className="hidden md:flex items-center gap-2 text-sm text-(--text-muted)">
                   <div className="w-8 h-8 rounded-full border border-(--border) flex items-center justify-center text-xs font-semibold bg-(--surface-hover)/70">
                     {initials(user?.firstName || user?.username || "User")}
@@ -702,18 +711,32 @@ export default function Home() {
               <div className="my-3 h-px bg-(--border)" />
 
               {isSignedIn ? (
-                <div className="flex items-center justify-between rounded-xl border border-(--border) bg-(--surface-hover)/40 px-3 py-2">
-                  <div className="flex items-center gap-3 text-sm text-(--text-muted)">
-                    <div className="w-8 h-8 rounded-full border border-(--border) flex items-center justify-center text-xs font-semibold bg-(--surface-hover)/70">
-                      {initials(user?.firstName || user?.username || "User")}
+                <>
+                  <button
+                    onClick={() => {
+                      router.push("/dashboard");
+                      setIsNavOpen(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl border border-(--border) px-3 py-2 text-left text-sm transition-colors bg-(--primary) text-black font-medium"
+                  >
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    <span>Dashboard</span>
+                  </button>
+                  <div className="flex items-center justify-between rounded-xl border border-(--border) bg-(--surface-hover)/40 px-3 py-2">
+                    <div className="flex items-center gap-3 text-sm text-(--text-muted)">
+                      <div className="w-8 h-8 rounded-full border border-(--border) flex items-center justify-center text-xs font-semibold bg-(--surface-hover)/70">
+                        {initials(user?.firstName || user?.username || "User")}
+                      </div>
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-xs font-medium text-(--text)">{user?.firstName || user?.username || "User"}</span>
+                        <span className="text-[10px] text-(--text-muted)">Signed in</span>
+                      </div>
                     </div>
-                    <div className="flex flex-col leading-tight">
-                      <span className="text-xs font-medium text-(--text)">{user?.firstName || user?.username || "User"}</span>
-                      <span className="text-[10px] text-(--text-muted)">Signed in</span>
-                    </div>
+                    <UserButton />
                   </div>
-                  <UserButton />
-                </div>
+                </>
               ) : (
                 <div className="flex flex-col gap-2">
                   <SignInButton mode="modal">

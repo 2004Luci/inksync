@@ -34,12 +34,12 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const bodyClassName = `${outfit.variable} ${playfair.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans antialiased`;
+  
   return (
     <ClerkProvider>
       <html lang="en" suppressHydrationWarning>
-        <body
-        className={`${outfit.variable} ${playfair.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans antialiased`}
-      >
+        <body className={bodyClassName} suppressHydrationWarning>
           {children}
         </body>
       </html>

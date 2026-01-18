@@ -1,4 +1,5 @@
 import { Room, WhiteboardState, Stroke, TextItem, User, ChatMessage } from '../types';
+import { getBoardByRoomId, saveBoardState, recordUserAccess } from '../db/boards';
 
 // In-memory room storage
 const rooms = new Map<string, Room>();
@@ -59,6 +60,93 @@ export function touchRoom(roomId: string): void {
   const meta = roomMeta.get(roomId);
   if (meta) {
     meta.lastActivity = Date.now();
+  }
+}
+
+// Debounced save timers for each room
+const saveTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Load board state from Supabase database
+ */
+export async function loadBoardFromDatabase(roomId: string): Promise<WhiteboardState | null> {
+  try {
+    const board = await getBoardByRoomId(roomId);
+    if (board && board.state) {
+      return board.state as WhiteboardState;
+    }
+    return null;
+  } catch (error) {
+    console.error(`Error loading board ${roomId} from database:`, error);
+    return null;
+  }
+}
+
+/**
+ * Save board state to Supabase database (debounced)
+ */
+export async function saveBoardToDatabase(
+  roomId: string,
+  state: WhiteboardState,
+  clerkUserId?: string | null
+): Promise<void> {
+  try {
+    // Clear existing timer for this room
+    const existingTimer = saveTimers.get(roomId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Set new debounced save (2 seconds)
+    const timer = setTimeout(async () => {
+      try {
+        await saveBoardState(roomId, state);
+        console.log(`Saved board ${roomId} to database`);
+      } catch (error) {
+        console.error(`Error saving board ${roomId} to database:`, error);
+      }
+      saveTimers.delete(roomId);
+    }, 2000);
+
+    saveTimers.set(roomId, timer);
+
+    // Record user access if clerkUserId provided
+    if (clerkUserId) {
+      recordUserAccess(clerkUserId, roomId).catch((error) => {
+        console.error(`Error recording user access for ${roomId}:`, error);
+      });
+    }
+  } catch (error) {
+    console.error(`Error scheduling save for board ${roomId}:`, error);
+  }
+}
+
+/**
+ * Force immediate save (no debounce) - used on disconnect
+ */
+export async function forceSaveBoardToDatabase(
+  roomId: string,
+  state: WhiteboardState,
+  clerkUserId?: string | null
+): Promise<void> {
+  try {
+    // Clear any pending debounced save
+    const existingTimer = saveTimers.get(roomId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      saveTimers.delete(roomId);
+    }
+
+    // Save immediately
+    await saveBoardState(roomId, state);
+    console.log(`Force saved board ${roomId} to database`);
+
+    // Record user access if clerkUserId provided
+    if (clerkUserId) {
+      await recordUserAccess(clerkUserId, roomId);
+    }
+  } catch (error) {
+    console.error(`Error force saving board ${roomId} to database:`, error);
   }
 }
 

@@ -12,7 +12,10 @@ import {
   clearBoard,
   getNewHostId,
   getRoomExpiryInfo,
-  touchRoom
+  touchRoom,
+  loadBoardFromDatabase,
+  saveBoardToDatabase,
+  forceSaveBoardToDatabase
 } from '../rooms/manager';
 import { Stroke, TextItem, JoinRoomPayload, CursorUpdate, Point, ChatMessage } from '../types';
 
@@ -30,7 +33,7 @@ export function setupSocketHandlers(io: Server) {
     let socketData: SocketData | null = null;
 
     // Join room
-    socket.on('room:join', (payload: JoinRoomPayload & { clerkUserId?: string }) => {
+    socket.on('room:join', async (payload: JoinRoomPayload & { clerkUserId?: string }) => {
       const { roomId, userName, isCreating = false, clerkUserId } = payload;
       const userId = socket.id;
       
@@ -48,6 +51,9 @@ export function setupSocketHandlers(io: Server) {
       // Join the socket room
       socket.join(roomId);
       
+      // Load board state from Supabase if it exists
+      const dbState = await loadBoardFromDatabase(roomId);
+      
       // Add user to room state (pass Clerk user ID for ownership tracking)
       // This will create the room if it doesn't exist (via getOrCreateRoom)
       const { user } = addUserToRoom(roomId, userId, userName, clerkUserId || null);
@@ -60,6 +66,32 @@ export function setupSocketHandlers(io: Server) {
           message: 'Failed to create or access room'
         });
         return;
+      }
+
+      // Merge database state with in-memory state (DB takes precedence)
+      if (dbState) {
+        // Database state takes precedence - overwrite in-memory state
+        room.state.strokes = { ...dbState.strokes };
+        room.state.texts = { ...dbState.texts };
+        // Keep current users (don't overwrite with DB users - they're session-specific)
+        // Merge messages: DB messages + any new in-memory messages
+        if (dbState.messages && dbState.messages.length > 0) {
+          // Start with DB messages, add any new in-memory messages
+          const existingMessageIds = new Set(dbState.messages.map(m => m.id));
+          const newMessages = room.state.messages.filter(m => !existingMessageIds.has(m.id));
+          room.state.messages = [...dbState.messages, ...newMessages].slice(-200); // Keep last 200
+        }
+        console.log(`Loaded board state from database for room ${roomId}`);
+      }
+
+      // Record user access in database if authenticated
+      if (clerkUserId) {
+        try {
+          const { recordUserAccess } = await import('../db/boards');
+          await recordUserAccess(clerkUserId, roomId);
+        } catch (error) {
+          console.error(`Error recording user access for ${roomId}:`, error);
+        }
       }
 
       // Get room expiry info
@@ -85,33 +117,57 @@ export function setupSocketHandlers(io: Server) {
     // New stroke added
     socket.on('stroke:add', (stroke: Stroke) => {
       if (!socketData) return;
-      const { roomId } = socketData;
+      const { roomId, clerkUserId } = socketData;
       
       if (addStroke(roomId, stroke)) {
         // Broadcast to other clients only (not back to sender)
         socket.to(roomId).emit('stroke:added', stroke);
+        
+        // Auto-save to database (debounced)
+        const room = getRoom(roomId);
+        if (room) {
+          saveBoardToDatabase(roomId, room.state, clerkUserId || null).catch((error) => {
+            console.error(`Error saving board ${roomId} after stroke:`, error);
+          });
+        }
       }
     });
 
     // Strokes erased
     socket.on('erase:strokes', (strokeIds: string[]) => {
       if (!socketData) return;
-      const { roomId } = socketData;
+      const { roomId, clerkUserId } = socketData;
       
       if (removeStrokes(roomId, strokeIds)) {
         // Broadcast to other clients only (not back to sender)
         socket.to(roomId).emit('strokes:erased', strokeIds);
+        
+        // Auto-save to database (debounced)
+        const room = getRoom(roomId);
+        if (room) {
+          saveBoardToDatabase(roomId, room.state, clerkUserId || null).catch((error) => {
+            console.error(`Error saving board ${roomId} after erase:`, error);
+          });
+        }
       }
     });
 
     // Text added
     socket.on('text:add', (text: TextItem) => {
       if (!socketData) return;
-      const { roomId } = socketData;
+      const { roomId, clerkUserId } = socketData;
       
       if (addText(roomId, text)) {
         // Broadcast to other clients only (not back to sender)
         socket.to(roomId).emit('text:added', text);
+        
+        // Auto-save to database (debounced)
+        const room = getRoom(roomId);
+        if (room) {
+          saveBoardToDatabase(roomId, room.state, clerkUserId || null).catch((error) => {
+            console.error(`Error saving board ${roomId} after text add:`, error);
+          });
+        }
       }
     });
 
@@ -164,10 +220,18 @@ export function setupSocketHandlers(io: Server) {
     // Clear board (host only)
     socket.on('board:clear', () => {
       if (!socketData) return;
-      const { roomId, userId } = socketData;
+      const { roomId, userId, clerkUserId } = socketData;
       
       if (clearBoard(roomId, userId)) {
         io.to(roomId).emit('board:cleared');
+        
+        // Auto-save to database (debounced)
+        const room = getRoom(roomId);
+        if (room) {
+          saveBoardToDatabase(roomId, room.state, clerkUserId || null).catch((error) => {
+            console.error(`Error saving board ${roomId} after clear:`, error);
+          });
+        }
       }
     });
 
@@ -195,9 +259,9 @@ export function setupSocketHandlers(io: Server) {
     });
 
     // Disconnect
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       if (!socketData) return;
-      const { roomId, userId } = socketData;
+      const { roomId, userId, clerkUserId } = socketData;
       
       const user = removeUserFromRoom(roomId, userId);
       if (user) {
@@ -207,6 +271,17 @@ export function setupSocketHandlers(io: Server) {
         const newHostId = getNewHostId(roomId);
         if (newHostId && newHostId !== userId) {
           io.to(roomId).emit('host:changed', newHostId);
+        }
+      }
+      
+      // Force save board state to database on disconnect
+      const room = getRoom(roomId);
+      if (room) {
+        try {
+          await forceSaveBoardToDatabase(roomId, room.state, clerkUserId || null);
+          console.log(`Force saved board ${roomId} on disconnect`);
+        } catch (error) {
+          console.error(`Error force saving board ${roomId} on disconnect:`, error);
         }
       }
       
