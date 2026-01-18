@@ -16,6 +16,15 @@ interface SocketData {
   userId: string;
   roomId: string;
   userName: string;
+  isAuthenticated: boolean;
+}
+
+// Check if user is authenticated
+// In a production app, you'd verify a proper JWT token here
+// For now, we trust the frontend's authentication state
+function isUserAuthenticated(authToken: string | undefined): boolean {
+  // The frontend sends "authenticated" if the user has a valid session
+  return authToken === "authenticated";
 }
 
 export function setupSocketHandlers(io: Server) {
@@ -25,9 +34,12 @@ export function setupSocketHandlers(io: Server) {
     let socketData: SocketData | null = null;
 
     // Join room
-    socket.on('room:join', (payload: JoinRoomPayload) => {
-      const { roomId, userName, isCreating = false } = payload;
+    socket.on('room:join', (payload: JoinRoomPayload & { authToken?: string }) => {
+      const { roomId, userName, isCreating = false, authToken } = payload;
       const userId = socket.id;
+      
+      // Check if user is authenticated
+      const isAuthenticated = isUserAuthenticated(authToken);
       
       // Check if room exists when joining (not creating)
       const existingRoom = getRoom(roomId);
@@ -41,7 +53,7 @@ export function setupSocketHandlers(io: Server) {
         return;
       }
       
-      socketData = { userId, roomId, userName };
+      socketData = { userId, roomId, userName, isAuthenticated };
       
       // Join the socket room
       socket.join(roomId);
@@ -58,18 +70,23 @@ export function setupSocketHandlers(io: Server) {
         state: room.state,
         userId,
         role: user.role,
-        userColor: user.color
+        userColor: user.color,
+        isAuthenticated
       });
 
       // Broadcast to others that a new user joined
       socket.to(roomId).emit('user:joined', user);
       
-      console.log(`User ${userName} (${userId}) joined room ${roomId} as ${user.role}`);
+      console.log(`User ${userName} (${userId}) joined room ${roomId} as ${user.role} (authenticated: ${isAuthenticated})`);
     });
 
-    // New stroke added
+    // New stroke added (requires authentication)
     socket.on('stroke:add', (stroke: Stroke) => {
       if (!socketData) return;
+      if (!socketData.isAuthenticated) {
+        socket.emit('auth:required', { action: 'stroke:add' });
+        return;
+      }
       const { roomId } = socketData;
       
       if (addStroke(roomId, stroke)) {
@@ -78,9 +95,13 @@ export function setupSocketHandlers(io: Server) {
       }
     });
 
-    // Strokes erased
+    // Strokes erased (requires authentication)
     socket.on('erase:strokes', (strokeIds: string[]) => {
       if (!socketData) return;
+      if (!socketData.isAuthenticated) {
+        socket.emit('auth:required', { action: 'erase:strokes' });
+        return;
+      }
       const { roomId } = socketData;
       
       if (removeStrokes(roomId, strokeIds)) {
@@ -88,9 +109,13 @@ export function setupSocketHandlers(io: Server) {
       }
     });
 
-    // Text added
+    // Text added (requires authentication)
     socket.on('text:add', (text: TextItem) => {
       if (!socketData) return;
+      if (!socketData.isAuthenticated) {
+        socket.emit('auth:required', { action: 'text:add' });
+        return;
+      }
       const { roomId } = socketData;
       
       if (addText(roomId, text)) {
@@ -126,9 +151,41 @@ export function setupSocketHandlers(io: Server) {
       }
     });
 
-    // Clear board (host only)
+    // Chat message sent
+    socket.on('chat:send', (payload: { content: string }) => {
+      if (!socketData) return;
+      const { roomId, userId } = socketData;
+
+      const room = getRoom(roomId);
+      if (!room) return;
+
+      const user = room.state.users[userId];
+      if (!user) return;
+
+      const trimmed = (payload?.content || '').trim();
+      if (!trimmed) return;
+
+      const message: ChatMessage = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        userName: user.name,
+        userColor: user.color,
+        content: trimmed.slice(0, 500),
+        timestamp: Date.now(),
+      };
+
+      if (addChatMessage(roomId, message)) {
+        io.to(roomId).emit('chat:new', message);
+      }
+    });
+
+    // Clear board (host only, requires authentication)
     socket.on('board:clear', () => {
       if (!socketData) return;
+      if (!socketData.isAuthenticated) {
+        socket.emit('auth:required', { action: 'board:clear' });
+        return;
+      }
       const { roomId, userId } = socketData;
       
       if (clearBoard(roomId, userId)) {

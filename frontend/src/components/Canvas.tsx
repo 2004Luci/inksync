@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useState } from "react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { useSession } from "next-auth/react";
 import { useWhiteboardStore } from "@/store/whiteboard";
 import { getSocket } from "@/lib/socket";
 import { nanoid } from "nanoid";
@@ -9,7 +10,14 @@ import { Point, Stroke, TextItem } from "@/lib/types";
 import { TextOverlay } from "./TextOverlay";
 import { CursorTooltips } from "./CursorTooltips";
 
-export function Canvas() {
+interface CanvasProps {
+  onAuthRequired?: () => void;
+}
+
+export function Canvas({ onAuthRequired }: CanvasProps) {
+  const { data: session } = useSession();
+  const isAuthenticated = !!session;
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -356,21 +364,47 @@ export function Canvas() {
     }
   };
 
+  // Handle guest click - prompt to sign in
+  const handleGuestClick = () => {
+    if (!isAuthenticated && onAuthRequired) {
+      onAuthRequired();
+    }
+  };
+
   return (
     <div ref={containerRef} className="w-full h-full relative">
       <canvas
         ref={canvasRef}
         width={dimensions.width}
         height={dimensions.height}
-        className={`w-full h-full touch-none bg-white ${getCursorClass()}`}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeaveCanvas}
+        className={`w-full h-full touch-none bg-white ${isAuthenticated ? getCursorClass() : "cursor-not-allowed"}`}
+        onPointerDown={isAuthenticated ? handlePointerDown : handleGuestClick}
+        onPointerMove={isAuthenticated ? handlePointerMove : undefined}
+        onPointerUp={isAuthenticated ? handlePointerUp : undefined}
+        onPointerLeave={isAuthenticated ? handlePointerLeaveCanvas : undefined}
       />
       
+      {/* Guest overlay - Sign in to draw */}
+      {!isAuthenticated && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-auto"
+        >
+          <button
+            onClick={onAuthRequired}
+            className="px-6 py-3 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-xl backdrop-blur-sm flex items-center gap-3 hover:bg-[var(--surface-hover)] transition-colors"
+          >
+            <svg className="w-5 h-5 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+            <span className="text-sm font-medium">Sign in to draw</span>
+          </button>
+        </motion.div>
+      )}
+      
       {/* Eraser cursor indicator */}
-      {tool === "eraser" && eraserCursor && (
+      {isAuthenticated && tool === "eraser" && eraserCursor && (
         <div
           className="pointer-events-none absolute rounded-full border-2 transition-all duration-75"
           style={{
@@ -389,7 +423,7 @@ export function Canvas() {
       
       {/* Text input overlay */}
       <AnimatePresence>
-        {textInputPosition && (
+        {textInputPosition && isAuthenticated && (
           <TextOverlay
             key="text-overlay"
             position={textInputPosition}
