@@ -1,4 +1,4 @@
-import { Room, WhiteboardState, Stroke, TextItem, User, ChatMessage } from '../types';
+import { Room, WhiteboardState, Stroke, TextItem, ShapeItem, User, ChatMessage } from '../types';
 import { getBoardByRoomId, saveBoardState, recordUserAccess } from '../db/boards';
 
 // In-memory room storage
@@ -17,7 +17,7 @@ const GUEST_ROOM_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 // Generate random color for users
 const USER_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', 
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4',
   '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F',
   '#BB8FCE', '#85C1E9', '#F8B500', '#00CED1'
 ];
@@ -31,6 +31,7 @@ function createEmptyState(): WhiteboardState {
   return {
     strokes: {},
     texts: {},
+    shapes: {},
     users: {},
     messages: []
   };
@@ -43,7 +44,7 @@ export function createRoom(roomId: string, ownerId: string | null = null): Room 
     hostId: null
   };
   rooms.set(roomId, room);
-  
+
   // Store room metadata
   const now = Date.now();
   roomMeta.set(roomId, {
@@ -51,7 +52,7 @@ export function createRoom(roomId: string, ownerId: string | null = null): Room 
     ownerId,
     lastActivity: now
   });
-  
+
   return room;
 }
 
@@ -154,10 +155,10 @@ export async function forceSaveBoardToDatabase(
 export function isRoomExpired(roomId: string): boolean {
   const meta = roomMeta.get(roomId);
   if (!meta) return false;
-  
+
   // Authenticated user rooms never expire
   if (meta.ownerId) return false;
-  
+
   // Guest rooms expire after 24 hours
   return Date.now() - meta.createdAt > GUEST_ROOM_EXPIRY_MS;
 }
@@ -166,11 +167,11 @@ export function isRoomExpired(roomId: string): boolean {
 export function getRoomExpiryInfo(roomId: string): { expiresAt: number | null; isGuest: boolean } | null {
   const meta = roomMeta.get(roomId);
   if (!meta) return null;
-  
+
   if (meta.ownerId) {
     return { expiresAt: null, isGuest: false };
   }
-  
+
   return {
     expiresAt: meta.createdAt + GUEST_ROOM_EXPIRY_MS,
     isGuest: true
@@ -181,7 +182,7 @@ export function getRoomExpiryInfo(roomId: string): { expiresAt: number | null; i
 export function cleanupExpiredRooms(): number {
   const now = Date.now();
   let cleaned = 0;
-  
+
   for (const [roomId, meta] of roomMeta.entries()) {
     // Only cleanup guest rooms
     if (!meta.ownerId && now - meta.createdAt > GUEST_ROOM_EXPIRY_MS) {
@@ -191,7 +192,7 @@ export function cleanupExpiredRooms(): number {
       console.log(`Cleaned up expired guest room: ${roomId}`);
     }
   }
-  
+
   return cleaned;
 }
 
@@ -219,7 +220,7 @@ export function getOrCreateRoom(roomId: string, ownerId: string | null = null): 
     rooms.delete(roomId);
     roomMeta.delete(roomId);
   }
-  
+
   let room = rooms.get(roomId);
   if (!room) {
     room = createRoom(roomId, ownerId);
@@ -228,14 +229,14 @@ export function getOrCreateRoom(roomId: string, ownerId: string | null = null): 
 }
 
 export function addUserToRoom(
-  roomId: string, 
-  userId: string, 
+  roomId: string,
+  userId: string,
   userName: string,
   clerkUserId: string | null = null
 ): { user: User; isHost: boolean } {
   const room = getOrCreateRoom(roomId, clerkUserId);
   const isHost = room.hostId === null;
-  
+
   if (isHost) {
     room.hostId = userId;
   }
@@ -248,10 +249,10 @@ export function addUserToRoom(
   };
 
   room.state.users[userId] = user;
-  
+
   // Update room activity
   touchRoom(roomId);
-  
+
   return { user, isHost };
 }
 
@@ -295,7 +296,7 @@ export function addStroke(roomId: string, stroke: Stroke): boolean {
 export function removeStrokes(roomId: string, strokeIds: string[]): boolean {
   const room = rooms.get(roomId);
   if (!room) return false;
-  
+
   for (const id of strokeIds) {
     delete room.state.strokes[id];
   }
@@ -328,12 +329,37 @@ export function removeText(roomId: string, textId: string): boolean {
 export function clearBoard(roomId: string, userId: string): boolean {
   const room = rooms.get(roomId);
   if (!room) return false;
-  
+
   // Only host can clear the board
   if (room.hostId !== userId) return false;
-  
+
   room.state.strokes = {};
   room.state.texts = {};
+  room.state.shapes = {};
+  return true;
+}
+
+// Shape management functions
+export function addShape(roomId: string, shape: ShapeItem): boolean {
+  const room = rooms.get(roomId);
+  if (!room) return false;
+  room.state.shapes[shape.id] = shape;
+  return true;
+}
+
+export function updateShape(roomId: string, shape: ShapeItem): boolean {
+  const room = rooms.get(roomId);
+  if (!room) return false;
+  if (!room.state.shapes[shape.id]) return false;
+  room.state.shapes[shape.id] = shape;
+  return true;
+}
+
+export function removeShape(roomId: string, shapeId: string): boolean {
+  const room = rooms.get(roomId);
+  if (!room) return false;
+  if (!room.state.shapes[shapeId]) return false;
+  delete room.state.shapes[shapeId];
   return true;
 }
 
