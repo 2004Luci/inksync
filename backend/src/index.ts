@@ -10,7 +10,8 @@ const httpServer = createServer(app);
 
 // Configure CORS
 const isAllowedOrigin = (origin: string | undefined): boolean => {
-  if (!origin) return false;
+  // Allow requests with no origin (health checks, server-to-server, same-origin)
+  if (!origin) return true;
   
   // Allow localhost for development
   if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
