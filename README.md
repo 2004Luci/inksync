@@ -1,4 +1,4 @@
-# InkSync - Real-Time Collaborative Whiteboard
+t# InkSync - Real-Time Collaborative Whiteboard
 
 A real-time collaborative whiteboard application where multiple users can draw, erase, add text, and create shapes on a shared canvas with instant synchronization. Built with Next.js, Socket.io, and Clerk authentication.
 
